@@ -1,4 +1,4 @@
-# GEPA System Analysis
+# GEPA System Analysis and Plan
 
 ## Overview
 CodeEvolver offers autonomous coding agents for high reliability AI systems. It uses GEPA optimization to evolve your AI system code until it performs optimally for a given dataset and outcome metric. See specs/CodeEvolver_analysis.md
@@ -7,12 +7,8 @@ This repository is for the GEPA (Genetic-Pareto) Optimizer, which CodeEvolver re
 
 **License:** MIT. All forked code must retain: `Copyright © 2025 Lakshya A Agrawal and the GEPA contributors`
 
-### Two Repositories
-
-| Repository | Role |
-|------------|------|
-| **GEPA-CodeEvolver** (gepa-ai/gepa fork) | Optimization algorithm, adapter protocol, tool interface, execution orchestration |
-| **CodeEvolver** | Execution service, adapter implementation, tool implementations, sandbox |
+## Analysis of GEPA
+See github.com/gepa-ai/gepa or see local copy in "GEPA-CodeEvolver" folder, in the same parent folder as this CodeEvolver project.
 
 ## Key GEPA Components
 
@@ -22,8 +18,7 @@ This repository is for the GEPA (Genetic-Pareto) Optimizer, which CodeEvolver re
 - For DSPY: each module is a DSPY program JSON
 - For Lakshya's full program optimization, each module is a string
 - For CodeEvolver:
-{"code": {git_branch":"codeevolver-3x67c"}, "prompt": {"module_1": {}}}
-	- the adapter for CodeEvolver should see a code key and a prompt key.
+	- the adapter for CodeEvolver should find a git branch in the candidate. {"git_branch": "codeevolver-3x67c", "module_1.predict":"instruction text...", etc.} 
 	- inside the prompt key, we will use an adapter based on the package type. If the package is DSPY, the prompt JSON will look like the DSPY program JSON. We will start with only one adapter, and that adapter will be for DSPY.
 **parent_program_for_candidates:** [[None], [prog_3], [prog_5, prog_1], [prog_3]] stores direct parent programs, and two programs for merge case
 **prog_candidate_val_subscores**: provides metric output for each eval row
@@ -93,9 +88,14 @@ Provide the new instructions within ``` blocks.
 
 
 
+## Proposed Plan for CodeEvolver
 
+### Two Repositories
 
-## Proposed Plan
+| Repository | Role |
+|------------|------|
+| **GEPA** (github.com/gepa-ai/gepa) | Optimization algorithm and execution orchestration, State tracking, adapter protocol |
+| **CodeEvolver** | Execution service, CodeEvolverAdapter implementation, Reflection agent with code read tool implementations, sandbox, git, etc. |
 
 ### Optimization jobs to be done 
 Implements gepa.optimizer and runs in /optimize at API in CE
@@ -105,16 +105,16 @@ Implements gepa.optimizer and runs in /optimize at API in CE
 - main GEPA run program and evaluate orchestation - CE imports gepa
     - Initialize GEPAState with seed_candidate
 - LOOP:
-    - Select candidate from Pareto frontier
-    - Sample minibatch from trainset
+    - Select candidate from Pareto frontier - GEPA
+    - Sample minibatch from trainset - GEPA
     - Run program and evaluate x10 examples x10 sandboxes (start w seed) - CE
-        - `adapter.evaluate`
+        - `adapter.evaluate` - CE Adapter
     - `adapter.make_reflective_dataset` (process traces → JSON) - CE adapter in GEPA
     - Reflective LM x1 (agent) -> change request - CE
-        - `adapter.propose_new_texts`
+        - `adapter.propose_new_texts` - CE Adapter
     - Create new candidate by calling edit code or editing prompt directly
-    - edit code
-    - Run_program And evaluate in CE
+    - edit code - CE
+    - Run_program And evaluate - CE
         -  `adapter.evaluate`
     - accept/reject. retry edit if necessary
     - Update GEPAState tracking - GEPA
@@ -125,7 +125,7 @@ Implements gepa.optimizer and runs in /optimize at API in CE
 *GEPAmod = GEPA-CodeEvolver*
 
 
-### Plan:
+## Plan:
 
 1. Create a CodeEvolverAdapter that handles the "code" mutation path separately - CE
     - Update evaluate() 
@@ -136,7 +136,7 @@ Implements gepa.optimizer and runs in /optimize at API in CE
 4. Use GEPAState
 
 #### Candidate structure
-Compatible with GEPA
+This candidate structure is compatible with GEPA. It references, the instruction text directly, and the adapter converts it to the dspy program format, using DspyAdapter.build_program()
 candidate = {
     "git_branch": "codeevolver-3x67c",  # ← still a string!
     "module_1.predict": "instruction text...",

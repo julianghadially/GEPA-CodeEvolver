@@ -144,7 +144,8 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
         # 4) Create candidate, evaluate on same minibatch (no need to capture traces)
         new_candidate = curr_prog.copy()
         for pname, text in new_texts.items():
-            assert pname in new_candidate, f"{pname} missing in candidate"
+            if pname not in new_candidate:
+                self.logger.log(f"Adding new component '{pname}' to candidate (codemutation)")
             new_candidate[pname] = text
 
         eval_new = self.adapter.evaluate(minibatch, new_candidate, capture_traces=False)
