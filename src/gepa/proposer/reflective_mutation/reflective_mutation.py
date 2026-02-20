@@ -326,11 +326,20 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
             return None
 
         # 4) Create candidate, evaluate on same minibatch (no need to capture traces)
-        new_candidate = curr_prog.copy()
-        for pname, text in new_texts.items():
-            if pname not in new_candidate:
-                self.logger.log(f"Adding new component '{pname}' to candidate (codemutation)")
-            new_candidate[pname] = text
+        if "_code" in new_texts:
+            # Code mutation: adapter returned complete synchronized candidate.
+            # Use it directly to avoid retaining stale predictor keys.
+            new_candidate = dict(new_texts)
+            for pname in new_texts:
+                if pname not in curr_prog:
+                    self.logger.log(f"Adding new component '{pname}' to candidate (codemutation)")
+            state.update_named_predictors(list(new_candidate.keys()))
+        else:
+            new_candidate = curr_prog.copy()
+            for pname, text in new_texts.items():
+                if pname not in new_candidate:
+                    self.logger.log(f"Adding new component '{pname}' to candidate (codemutation)")
+                new_candidate[pname] = text
 
         def evaluator(b, c):
             r = self.adapter.evaluate(b, c, capture_traces=False)

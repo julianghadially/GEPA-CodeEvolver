@@ -240,6 +240,10 @@ class GEPAState(Generic[RolloutOutput, DataId]):
         self.validation_schema_version = self._VALIDATION_SCHEMA_VERSION
         self.evaluation_cache = evaluation_cache
 
+    def update_named_predictors(self, new_keys: list[str]) -> None:
+        """Update list_of_named_predictors after code mutation changes candidate structure."""
+        self.list_of_named_predictors = new_keys
+
     def is_consistent(self) -> bool:
         assert len(self.program_candidates) == len(self.parent_program_for_candidate)
         assert len(self.program_candidates) == len(self.named_predictor_id_to_update_next_for_program_candidate)

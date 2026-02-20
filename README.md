@@ -323,6 +323,20 @@ We encourage the community and users to help us develop adapters to allow GEPA t
     - [HuggingFace Cookbook on prompt optimization for with DSPy and GEPA](https://huggingface.co/learn/cookbook/en/dspy_gepa)
     - [OpenAI Cookbook showing how to build self-evolving agents using GEPA](https://cookbook.openai.com/examples/partners/self_evolving_agents/autonomous_agent_retraining)
 
+## Changes from original GEPA package
+
+This fork includes the following changes to support CodeEvolver's code mutation workflow, where DSPy program structure (modules/predictors) can change between iterations:
+
+### `src/gepa/proposer/reflective_mutation/reflective_mutation.py`
+
+1. **Removed assertion that new prompt keys must exist in the old candidate** — The original `assert pname in new_candidate` was replaced with a log message, allowing code mutations to introduce new predictor keys that didn't exist in the parent candidate.
+
+2. **Use adapter's synchronized candidate directly after code mutation** — When `new_texts` contains `_code` (indicating a code mutation), the new candidate is now built from `dict(new_texts)` instead of `curr_prog.copy()`. This prevents stale predictor keys from the old candidate persisting after a code mutation restructures the program. The state's predictor list is also updated via `state.update_named_predictors()`.
+
+### `src/gepa/core/state.py`
+
+3. **Added `update_named_predictors()` method to `GEPAState`** — Allows updating `list_of_named_predictors` after a code mutation changes the candidate structure. Without this, the round-robin component selector could pick stale predictor names that no longer exist in the runtime program, causing `make_reflective_dataset` to fail.
+
 ## Reference and Citation
 
 If you use this repository, or the GEPA algorithm, kindly cite:
