@@ -3,7 +3,7 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, Literal
 
 # Generic type aliases matching your original
 RolloutOutput = TypeVar("RolloutOutput")
@@ -32,6 +32,8 @@ class EvaluationBatch(Generic[Trajectory, RolloutOutput]):
     scores: list[float]
     trajectories: list[Trajectory] | None = None
     objective_scores: list[dict[str, float]] | None = None
+    error: str | None = None
+    type: Literal["subsample","valset","unknown"] = "unknown"
 
 
 class ProposalFn(Protocol):
