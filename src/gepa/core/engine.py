@@ -378,6 +378,8 @@ class GEPAEngine(Generic[DataId, DataInst, Trajectory, RolloutOutput]):
             assert state.is_consistent()
             proposal_accepted = False
             iteration_started = False
+            outcome_reflection_called = False
+            proposal = None
             try:
                 state.save(self.run_dir, use_cloudpickle=self.use_cloudpickle)
                 notify_callbacks(
@@ -490,6 +492,16 @@ class GEPAEngine(Generic[DataId, DataInst, Trajectory, RolloutOutput]):
                 # Acceptance: require strict improvement on subsample
                 old_sum = sum(proposal.subsample_scores_before or [])
                 new_sum = sum(proposal.subsample_scores_after or [])
+
+                if self.adapter.outcome_reflection is not None:
+                    self.adapter.outcome_reflection(
+                        candidate=proposal.candidate,
+                        eval_batch=proposal.metadata.get("new_eval_batch"),
+                        old_score=old_sum,
+                        new_score=new_sum,
+                    )
+                    outcome_reflection_called = True
+
                 if new_sum <= old_sum:
                     self.logger.log(
                         f"Iteration {state.i + 1}: New subsample score {new_sum} is not better than old score {old_sum}, skipping"
@@ -550,6 +562,19 @@ class GEPAEngine(Generic[DataId, DataInst, Trajectory, RolloutOutput]):
                         will_continue=not self.raise_on_exception,
                     ),
                 )
+
+                if not outcome_reflection_called and self.adapter.outcome_reflection is not None:
+                    try:
+                        self.adapter.outcome_reflection(
+                            candidate=proposal.candidate if proposal else None,
+                            eval_batch=proposal.metadata.get("new_eval_batch") if proposal else None,
+                            old_score=0.0,
+                            new_score=0.0,
+                            error=e,
+                        )
+                    except Exception:
+                        pass
+
                 if self.raise_on_exception:
                     raise e
                 else:

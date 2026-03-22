@@ -57,6 +57,29 @@ class ProposalFn(Protocol):
         ...
 
 
+class OutcomeReflectionFn(Protocol):
+    def __call__(
+        self,
+        candidate: dict[str, str] | None,
+        eval_batch: "EvaluationBatch[Any, Any] | None",
+        old_score: float,
+        new_score: float,
+        error: Exception | None = None,
+    ) -> None:
+        """
+        Called after subsample evaluation scores are computed, before the accept/reject decision.
+        Also called on the error path if evaluation threw an exception.
+
+        Parameters
+        - candidate: the proposed candidate, or None if the error occurred before a proposal was made.
+        - eval_batch: the new candidate's subsample EvaluationBatch, or None on the error path.
+        - old_score: sum of parent candidate's subsample scores (0.0 on error path).
+        - new_score: sum of new candidate's subsample scores (0.0 on error path).
+        - error: the exception that occurred, or None on the happy path.
+        """
+        ...
+
+
 class GEPAAdapter(Protocol[DataInst, Trajectory, RolloutOutput]):
     """
     GEPAAdapter is the single integration point between your system
@@ -180,3 +203,4 @@ class GEPAAdapter(Protocol[DataInst, Trajectory, RolloutOutput]):
         ...
 
     propose_new_texts: ProposalFn | None = None
+    outcome_reflection: OutcomeReflectionFn | None = None

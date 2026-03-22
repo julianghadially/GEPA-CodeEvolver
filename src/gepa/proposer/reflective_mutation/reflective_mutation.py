@@ -4,7 +4,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from gepa.core.adapter import DataInst, GEPAAdapter, ProposalFn, RolloutOutput, Trajectory
+from gepa.core.adapter import DataInst, EvaluationBatch, GEPAAdapter, ProposalFn, RolloutOutput, Trajectory
 from gepa.core.callbacks import (
     CandidateSelectedEvent,
     EvaluationEndEvent,
@@ -390,6 +390,14 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
             {"new_subsample_score": new_sum, "total_metric_calls": state.total_num_evals}, step=i
         )
 
+        new_eval_batch = EvaluationBatch(
+            outputs=outputs,
+            scores=new_scores,
+            trajectories=None,
+            objective_scores=[objective_by_id[eid] for eid in subsample_ids] if objective_by_id else None,
+            type="subsample",
+        )
+
         return CandidateProposal(
             candidate=new_candidate,
             parent_program_ids=[curr_prog_id],
@@ -397,4 +405,5 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
             subsample_scores_before=eval_curr.scores,
             subsample_scores_after=new_scores,
             tag="reflective_mutation",
+            metadata={"new_eval_batch": new_eval_batch},
         )
