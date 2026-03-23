@@ -518,6 +518,31 @@ class CompositeCallback:
         self._notify("on_error", event)
 
 
+class CandidateTrackingCallback:
+    """Tracks parent and child program indices across iterations.
+
+    Updated fields after each event:
+      on_candidate_selected  -> iteration, parent_program (child_program reset to None)
+      on_candidate_accepted  -> child_program
+      on_candidate_rejected  -> child_program remains None
+    """
+
+    def __init__(self) -> None:
+        self.iteration_idx: int | None = None
+        self.parent_candidate_idx: int | None = None
+        self.candidate_idx: int | None = None
+
+    def on_candidate_selected(self, event: CandidateSelectedEvent) -> None:
+        '''Fires in GEPAEngine'''
+        self.iteration_idx = event["iteration"]
+        self.parent_candidate_idx = event["candidate_idx"]
+        self.candidate_idx = None
+
+    def on_candidate_accepted(self, event: CandidateAcceptedEvent) -> None:
+        '''Fires in ReflectiveMutationProposer'''
+        self.candidate_idx = event["new_candidate_idx"]
+
+
 def notify_callbacks(
     callbacks: list[Any] | None,
     method_name: str,
