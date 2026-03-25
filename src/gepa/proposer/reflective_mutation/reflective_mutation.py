@@ -341,8 +341,12 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
                     self.logger.log(f"Adding new component '{pname}' to candidate (codemutation)")
                 new_candidate[pname] = text
 
+        _new_trajectories = []
+
         def evaluator(b, c):
-            r = self.adapter.evaluate(b, c, capture_traces=False)
+            r = self.adapter.evaluate(b, c, capture_traces=True)
+            if r.trajectories:
+                _new_trajectories.extend(r.trajectories)
             return r.outputs, r.scores, list(r.objective_scores) if r.objective_scores else None
 
         # Evaluate new candidate (not yet in state)
@@ -353,7 +357,7 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
                 iteration=i,
                 candidate_idx=None,
                 batch_size=len(minibatch),
-                capture_traces=False,
+                capture_traces=True,
                 parent_ids=[curr_prog_id],
                 inputs=minibatch,
                 is_seed_candidate=False,
@@ -373,10 +377,10 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
                 iteration=i,
                 candidate_idx=None,
                 scores=new_scores,
-                has_trajectories=False,
+                has_trajectories=bool(_new_trajectories),
                 parent_ids=[curr_prog_id],
                 outputs=outputs,
-                trajectories=None,
+                trajectories=_new_trajectories if _new_trajectories else None,
                 objective_scores=[objective_by_id[eid] for eid in subsample_ids] if objective_by_id else None,
                 is_seed_candidate=False,
             ),
@@ -393,7 +397,7 @@ class ReflectiveMutationProposer(ProposeNewCandidate[DataId]):
         new_eval_batch = EvaluationBatch(
             outputs=outputs,
             scores=new_scores,
-            trajectories=None,
+            trajectories=_new_trajectories if _new_trajectories else None,
             objective_scores=[objective_by_id[eid] for eid in subsample_ids] if objective_by_id else None,
             type="subsample",
         )
