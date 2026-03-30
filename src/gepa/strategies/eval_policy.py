@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from abc import abstractmethod
 from typing import Protocol, runtime_checkable
 
@@ -32,13 +33,25 @@ class EvaluationPolicy(Protocol[DataId, DataInst]):  # type: ignore
 
 
 class FullEvaluationPolicy(EvaluationPolicy[DataId, DataInst]):
-    """Policy that evaluates all validation instances every time."""
+    """Policy that evaluates all validation instances every time.
+
+    When ``max_val_set_size`` is set and the validation set is larger than that
+    limit, a random subset of that size is sampled on each call to
+    ``get_eval_batch``, producing a different subset every time.
+    """
+
+    def __init__(self, max_val_set_size: int | None = None, rng: random.Random | None = None) -> None:
+        self.max_val_set_size = max_val_set_size
+        self.rng = rng or random.Random()
 
     def get_eval_batch(
         self, loader: DataLoader[DataId, DataInst], state: GEPAState, target_program_idx: ProgramIdx | None = None
     ) -> list[DataId]:
-        """Always return the full ordered list of validation ids."""
-        return list(loader.all_ids())
+        """Return validation ids, subsampled to ``max_val_set_size`` when set."""
+        all_ids = list(loader.all_ids())
+        if self.max_val_set_size is not None and len(all_ids) > self.max_val_set_size:
+            return self.rng.sample(all_ids, self.max_val_set_size)
+        return all_ids
 
     def get_best_program(self, state: GEPAState) -> ProgramIdx:
         """Pick the program whose evaluated validation scores achieve the highest average."""

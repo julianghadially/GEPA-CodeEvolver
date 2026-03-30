@@ -23,7 +23,9 @@ Your task is to write a new instruction for the assistant.
 
 Read the inputs carefully and identify the input format and infer detailed task description about the task I wish to solve with the assistant.
 
-Read all the assistant responses and the corresponding feedback. Identify all niche and domain specific factual information about the task and include it in the instruction, as a lot of it may not be available to the assistant in the future. The assistant may have utilized a generalizable strategy to solve the task, if so, include that in the instruction as well.
+Read all the assistant responses and the corresponding feedback. Identify domain-specific patterns related to the task and include it in the instructions. Be careful not to overfit: niche factual information might be useful as in-context learning examples, but your instructions should be able to generalize beyond these examples.
+
+Additionally, the assistant may already have utilized a generalizable strategy to solve the task. If so, include that in the instruction as well.
 
 Provide the new instructions within ``` blocks."""
 

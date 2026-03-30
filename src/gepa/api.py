@@ -82,6 +82,7 @@ def optimize(
     # Reproducibility
     seed: int = 0,
     raise_on_exception: bool = True,
+    max_val_set_size: int | None = None,
     val_evaluation_policy: EvaluationPolicy[DataId, DataInst] | Literal["full_eval"] | None = None,
 ) -> GEPAResult[RolloutOutput, DataId]:
     """
@@ -170,12 +171,19 @@ def optimize(
 
     # Reproducibility
     - seed: The seed to use for the random number generator.
+    - max_val_set_size: Optional maximum number of validation examples to evaluate per iteration. When set and the validation set is larger than this value, a random subset of this size is sampled on each evaluation call. Each evaluation uses a different random sample, reducing overfitting while building coverage across the full validation set over time. Cannot be used together with a custom val_evaluation_policy.
     - val_evaluation_policy: Strategy controlling which validation ids to score each iteration and which candidate is currently best. Supported strings: "full_eval" (evaluate every id each time) Passing None defaults to "full_eval".
     - raise_on_exception: Whether to propagate proposer/evaluator exceptions instead of stopping gracefully.
     """
     # Validate seed_candidate is not None or empty
     if seed_candidate is None or not seed_candidate:
         raise ValueError("seed_candidate must contain at least one component text.")
+
+    if max_val_set_size is not None and max_val_set_size <= 0:
+        raise ValueError(f"max_val_set_size must be a positive integer, got {max_val_set_size}")
+
+    if max_val_set_size is not None and val_evaluation_policy is not None and val_evaluation_policy != "full_eval":
+        raise ValueError("max_val_set_size cannot be used together with a custom val_evaluation_policy")
 
     active_adapter: GEPAAdapter[DataInst, Trajectory, RolloutOutput] | None = None
     if adapter is None:
@@ -297,7 +305,7 @@ def optimize(
         )
 
     if val_evaluation_policy is None or val_evaluation_policy == "full_eval":
-        val_evaluation_policy = FullEvaluationPolicy()
+        val_evaluation_policy = FullEvaluationPolicy(max_val_set_size=max_val_set_size, rng=rng)
     elif not isinstance(val_evaluation_policy, EvaluationPolicy):
         raise ValueError(
             f"val_evaluation_policy should be one of 'full_eval' or an instance of EvaluationPolicy, but got {type(val_evaluation_policy)}"
