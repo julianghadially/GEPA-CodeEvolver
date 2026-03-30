@@ -170,6 +170,7 @@ def test_dynamic_validation(run_dir, rng):
     class DummyAdapter:
         def __init__(self):
             self.propose_new_texts = self._propose_new_texts
+            self.outcome_reflection = None
 
         def evaluate(self, batch, candidate, capture_traces=False):
             weight = int(candidate["system_prompt"].split("=")[-1])

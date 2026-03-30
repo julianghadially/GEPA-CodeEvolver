@@ -28,6 +28,7 @@ class DummyAdapter:
         self.expand_after = expand_after
         self.val_eval_calls = 0
         self.propose_new_texts = self._propose_new_texts
+        self.outcome_reflection = None
 
     def evaluate(self, batch, candidate, capture_traces=False):
         weight = int(candidate["system_prompt"].split("=")[-1])

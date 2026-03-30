@@ -80,6 +80,7 @@ class TestEvaluationCacheIntegration:
         class DummyAdapter:
             def __init__(self):
                 self.propose_new_texts = self._propose_new_texts
+                self.outcome_reflection = None
 
             def evaluate(self, batch, candidate, capture_traces=False):
                 weight = hash(candidate.get("system_prompt", "")) % 10
