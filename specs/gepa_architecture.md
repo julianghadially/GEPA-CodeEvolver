@@ -20,7 +20,7 @@ This document maps the step-by-step process flow of a GEPA optimization run, wit
 | Step | Engine Process | Adapter Call |
 |------|---------------|-------------|
 | 1 | `initialize_gepa_state()` — checks for saved state in `run_dir`, resumes if found | |
-| 2 | If no saved state: evaluate seed candidate on **full valset** | **`adapter.evaluate(valset, seed_candidate, capture_traces=False)`** |
+| 2 | If no saved state: evaluate seed candidate on **full valset** (always uses all IDs — bypasses `val_evaluation_policy` and `max_val_set_size`) | **`adapter.evaluate(valset, seed_candidate, capture_traces=False)`** |
 | 3 | Construct `GEPAState` with seed candidate scores, initialize Pareto front with seed as sole member | |
 | 4 | Log base program score, fire `on_optimization_start` callback | |
 
@@ -205,11 +205,11 @@ The reflection LM response is parsed to extract text within ``` blocks.
 | If `new_sum <= old_sum` → **REJECT**, fire `on_candidate_rejected`, go to next iteration | — |
 | If `new_sum > old_sum` → **ACCEPT**, proceed to full eval | — |
 
-#### Step 10: Full Valset Evaluation & Pareto Update (accepted candidates only)
+#### Step 10: Valset Evaluation & Pareto Update (accepted candidates only)
 
 | Engine | Adapter |
 |--------|---------|
-| Evaluate accepted candidate on **full validation set** | **`adapter.evaluate(valset, new_candidate, capture_traces=False)`** |
+| Evaluate accepted candidate on validation set (subject to `val_evaluation_policy` — may be subsampled via `max_val_set_size`) | **`adapter.evaluate(valset_batch, new_candidate, capture_traces=False)`** |
 | `state.update_state_with_new_program()` — add to candidate pool, update Pareto front | — |
 | Determine if this is the new best program overall | — |
 | Fire `on_pareto_front_updated`, `on_valset_evaluated`, `on_candidate_accepted` callbacks | — |
@@ -235,13 +235,13 @@ These are all the points where `GEPAEngine` crosses the adapter boundary:
 
 | Adapter Method | When Called | Capture Traces? | Purpose |
 |---|---|---|---|
-| `adapter.evaluate(valset, seed, False)` | Initialization | No | Baseline score for seed candidate |
+| `adapter.evaluate(valset, seed, False)` | Initialization | No | Baseline score for seed candidate (always full valset, bypasses `max_val_set_size`) |
 | `adapter.evaluate(minibatch, parent, True)` | Step 4 — every iteration | **Yes** | Get trajectories + scores for reflection |
 | `adapter.make_reflective_dataset(candidate, eval_batch, components)` | Step 6 — every iteration | — | Build reflection input for the LM |
 | `adapter.propose_new_texts(candidate, dataset, components)` | Step 7 — every iteration (if implemented) | — | Custom proposal logic |
 | `adapter.evaluate(minibatch, new_candidate, False)` | Step 8 — every iteration | No | Subsample gate: is new candidate better? |
 | `adapter.outcome_reflection(candidate, batch, old, new)` | Step 9 — every iteration (if implemented) | — | Optional hook after scoring |
-| `adapter.evaluate(valset, accepted_candidate, False)` | Step 10 — accepted only | No | Full eval for Pareto tracking |
+| `adapter.evaluate(valset_batch, accepted_candidate, False)` | Step 10 — accepted only | No | Valset eval for Pareto tracking (may be subsampled via `max_val_set_size`) |
 | `adapter.evaluate(subsample, merged_candidate, False)` | Merge — when scheduled | No | Merged candidate subsample eval |
 | `adapter.evaluate(valset, merged_candidate, False)` | Merge accepted | No | Full eval for merged candidate |
 
@@ -306,4 +306,17 @@ program_at_pareto_front_valset: dict[id, set[int]]  # which candidates are on th
 | Component selection | `ReflectionComponentSelector` | `RoundRobinReflectionComponentSelector` | Step 5 |
 | Instruction proposal | `ProposalFn` or `adapter.propose_new_texts` | `InstructionProposalSignature` + `reflection_lm` | Step 7 |
 | Validation eval policy | `EvaluationPolicy` | `FullEvaluationPolicy` | Step 10 |
+| Validation set sampling | `max_val_set_size` (int) on `FullEvaluationPolicy` | `None` (use full valset) | Step 10 |
 | Stopping condition | `StopperProtocol` | `MaxMetricCallsStopper` | Loop guard |
+
+---
+
+## Validation Set Sampling (`max_val_set_size`)
+
+When `max_val_set_size` is passed to `optimize()`, the `FullEvaluationPolicy` randomly subsamples the validation set to that size on **each evaluation call**, producing a different random subset every time. This reduces overfitting on small validation sets while building coverage across the full dataset over time.
+
+**Important:** The seed evaluation (Initialization Phase, Step 2) always evaluates the **full validation set** regardless of `max_val_set_size`. This is hardcoded in `engine.run()` at the `valset_evaluator` closure, which calls `valset.all_ids()` directly and bypasses the `val_evaluation_policy`. Only subsequent evaluations during the main loop (Step 10) go through the evaluation policy and are subject to sampling.
+
+**How Pareto tracking works with sampling:** Since different evaluations cover different subsets, `prog_candidate_val_subscores` accumulates per-instance scores over time. Programs evaluated on more instances have more stable averages. The existing tie-breaking on coverage in `get_best_program()` helps prefer better-covered programs.
+
+**Interaction with evaluation caching:** The evaluation cache is keyed by `(candidate_hash, example_id)`. When sampled subsets overlap with previous evaluations, cached results are reused automatically, saving metric calls.
