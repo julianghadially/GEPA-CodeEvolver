@@ -1,33 +1,65 @@
-# GEPA
+# ASA — Artificial Selection Algorithm
 
-GEPA (Genetic-Pareto) is a Python framework for optimizing text components (AI prompts, code, instructions) using LLM-based reflection and Pareto-efficient evolutionary search.
+ASA is a thin Python state-tracking library for agent-directed candidate evolution. It maintains a candidate pool, per-row validation subscores, multi-objective scores, and Pareto frontiers — but does not choose parents, run reflection, or orchestrate iteration. The caller (typically an agent) drives those decisions and reads the frontier as a memory substrate.
+
+This is a refactor of the upstream GEPA library (github.com/gepa-ai/gepa). Copyright for the original code remains with Lakshya A Agrawal and the GEPA contributors (MIT license).
 
 ## Setup
 
-We use **uv** for dependency management. The project uses setuptools as the build backend. All python executions must be done through uv.
-
 ```bash
-uv sync --extra dev
+pip install -e .
 ```
+
+Python 3.10+. Build backend: setuptools.
 
 ## Project Structure
 
-- `src/gepa/` — main package source
-  - `core/` — optimization loop, state, evaluation
-  - `proposer/` — candidate proposal and mutation logic
-  - `adapters/` — integration adapters (DSPy, RAG, MCP, etc.)
-  - `strategies/` — batch sampling and candidate selection
-  - `logging/` — experiment tracking and logging
+- `src/asa/` — main package source
+  - `state.py` — `ASAState`: candidate pool, val subscores, objective scores, frontier maintenance, JSON persistence
+  - `frontier.py` — `FrontierType` enum, `is_dominated`, `remove_dominated_programs`
+  - `result.py` — `ASAResult` immutable export
+  - `logging.py` — `LoggerProtocol` shim
 - `tests/` — pytest test suite
-- `docs/` — mkdocs documentation site
+- `specs/` — design documents
+
+## Public API
+
+```python
+import asa
+
+state = asa.ASAState(
+    seed_candidate={"module_1": "..."},
+    seed_val_scores={0: 0.5, 1: 0.7},
+    frontier_type=asa.FrontierType.INSTANCE,  # or OBJECTIVE / HYBRID / CARTESIAN
+)
+
+new_idx = state.add_candidate(
+    candidate={"module_1": "..."},
+    val_scores_by_id={0: 0.8, 1: 0.6},
+    parent_ids=[0],
+)
+
+# Memory-substrate reads
+state.get_pareto_front()          # {val_id: {prog_idx, ...}}
+state.get_objective_front()       # {objective: {prog_idx, ...}}
+state.get_frontier_members()      # set of prog_idx still winning somewhere
+state.get_unique_wins(idx)        # val_ids only this candidate wins
+state.get_best_program()          # highest average val score
+
+state.save("run/state.json")
+asa.ASAState.load("run/state.json")
+asa.ASAResult.from_state(state)
+```
+
+See `specs/` for the architectural rationale: why ASA replaced the upstream GEPA engine/proposer/adapter system with a thin state library, and why the Pareto frontier is retained as agent memory rather than as a sampling mechanism.
 
 ## Build & Test
 
 ```bash
-uv run pytest
-uv run ruff check src/
-uv run ruff format src/
-uv run pyright src/
+pytest tests/
+ruff check src/
+ruff format src/
+pyright src/
 ```
 
 ## Code Style

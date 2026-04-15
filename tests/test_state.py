@@ -1,329 +1,207 @@
-import json
-import os
-import shutil
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 
-import gepa
-import gepa.core.state as state_mod
-from gepa.core.adapter import EvaluationBatch
-from gepa.core.state import ValsetEvaluation
-from gepa.strategies.eval_policy import EvaluationPolicy
+from asa import ASAResult, ASAState, FrontierType
+from asa.frontier import is_dominated, remove_dominated_programs
 
 
-@pytest.fixture
-def run_dir(tmp_path):
-    os.makedirs(tmp_path / "run")
-    return tmp_path / "run"
-
-
-def test_initialize_gepa_state_fresh_init_writes_and_counts(run_dir):
-    """With a run dir but no state, the state is initialized from scratch and the eval output is written to the run dir."""
-    seed = {"model": "m"}
-    valset_out = ValsetEvaluation(
-        outputs_by_val_id={0: "out0", 1: {"k": "out1"}},
-        scores_by_val_id={0: 0.1, 1: 0.2},
-        objective_scores_by_val_id=None,
+def test_seed_initialization_instance_frontier():
+    state = ASAState(
+        seed_candidate={"m": "seed"},
+        seed_val_scores={0: 0.5, 1: 0.7},
     )
-
-    fake_logger = MagicMock()
-    valset_evaluator = MagicMock(return_value=valset_out)
-
-    result = state_mod.initialize_gepa_state(
-        run_dir=str(run_dir),
-        logger=fake_logger,
-        seed_candidate=seed,
-        valset_evaluator=valset_evaluator,
-        track_best_outputs=False,
-    )
-
-    assert isinstance(result, state_mod.GEPAState)
-    assert result.num_full_ds_evals == 1
-    assert result.total_num_evals == len(valset_out.scores_by_val_id)
-    fake_logger.log.assert_not_called()
-    valset_evaluator.assert_called_once_with(seed)
-
-    # Files written for each task with outputs (not scores)
-    base = run_dir / "generated_best_outputs_valset"
-    p0 = base / "task_0" / "iter_0_prog_0.json"
-    p1 = base / "task_1" / "iter_0_prog_0.json"
-    assert p0.exists() and p1.exists()
-    assert json.loads(p0.read_text()) == "out0"
-    assert json.loads(p1.read_text()) == {"k": "out1"}
-
-
-def test_initialize_gepa_state_no_run_dir():
-    """Without a run dir, the state is initialized from scratch and not saved."""
-    seed = {"model": "m"}
-    valset_out = ValsetEvaluation(
-        outputs_by_val_id={0: "out"},
-        scores_by_val_id={0: 0.5},
-        objective_scores_by_val_id=None,
-    )
-    fake_logger = MagicMock()
-    valset_evaluator = MagicMock(return_value=valset_out)
-
-    result = state_mod.initialize_gepa_state(
-        run_dir=None,
-        logger=fake_logger,
-        seed_candidate=seed,
-        valset_evaluator=valset_evaluator,
-        track_best_outputs=False,
-    )
-
-    assert isinstance(result, state_mod.GEPAState)
-    assert result.num_full_ds_evals == 1
-    assert result.total_num_evals == len(valset_out.scores_by_val_id)
-    fake_logger.log.assert_not_called()
-    valset_evaluator.assert_called_once_with(seed)
-
-
-def test_gepa_state_save_and_initialize(run_dir):
-    """With a run dir that contains a saved state, the state is saved and initialized from it."""
-    seed = {"model": "m"}
-    valset_out = ValsetEvaluation(
-        outputs_by_val_id={0: {"x": 1}, 1: {"y": 2}},
-        scores_by_val_id={0: 0.3, 1: 0.7},
-        objective_scores_by_val_id=None,
-    )
-    fake_logger = MagicMock()
-    valset_evaluator = MagicMock(return_value=valset_out)
-
-    state = state_mod.GEPAState(seed, valset_out)
-    state.num_full_ds_evals = 3
-    state.total_num_evals = 10
+    assert state.program_candidates == [{"m": "seed"}]
+    assert state.parent_program_for_candidates == [[]]
+    assert state.prog_candidate_val_subscores == [{0: 0.5, 1: 0.7}]
+    assert state.get_pareto_front() == {0: {0}, 1: {0}}
+    assert state.get_frontier_members() == {0}
+    assert state.get_best_program() == 0
+    assert state.total_num_evals == 2
+    assert state.i == -1
     assert state.is_consistent()
 
-    # Ensure both regular pickle and cloudpickle save and restore equivalent state
-    state.save(run_dir)
-    result = state_mod.initialize_gepa_state(
-        run_dir=str(run_dir),
-        logger=fake_logger,
-        seed_candidate=seed,
-        valset_evaluator=valset_evaluator,
-        track_best_outputs=False,
+
+def test_objective_frontier_requires_objective_scores():
+    with pytest.raises(ValueError):
+        ASAState(
+            seed_candidate={"m": "seed"},
+            seed_val_scores={0: 0.5},
+            frontier_type=FrontierType.OBJECTIVE,
+        )
+
+
+def test_seed_initialization_objective_frontier():
+    state = ASAState(
+        seed_candidate={"m": "seed"},
+        seed_val_scores={0: 0.5, 1: 0.9},
+        seed_objective_scores_by_val_id={0: {"acc": 0.5, "lat": 0.3}, 1: {"acc": 0.9, "lat": 0.1}},
+        frontier_type=FrontierType.OBJECTIVE,
     )
+    assert state.prog_candidate_objective_scores[0] == pytest.approx({"acc": 0.7, "lat": 0.2})
+    assert state.get_objective_front() == {"acc": {0}, "lat": {0}}
 
-    assert state.__dict__ == result.__dict__
 
-    state.save(run_dir, use_cloudpickle=True)
-    result = state_mod.initialize_gepa_state(
-        run_dir=str(run_dir),
-        logger=fake_logger,
-        seed_candidate=seed,
-        valset_evaluator=valset_evaluator,
-        track_best_outputs=False,
+def test_cartesian_frontier_initialization():
+    state = ASAState(
+        seed_candidate={"m": "seed"},
+        seed_val_scores={0: 0.5},
+        seed_objective_scores_by_val_id={0: {"acc": 0.5, "lat": 0.3}},
+        frontier_type=FrontierType.CARTESIAN,
     )
+    assert state.get_cartesian_front() == {(0, "acc"): {0}, (0, "lat"): {0}}
 
-    assert state.__dict__ == result.__dict__
+
+def test_add_candidate_dominating_replaces_instance_front():
+    state = ASAState({"m": "a"}, {0: 0.5, 1: 0.5})
+    new_idx = state.add_candidate({"m": "b"}, {0: 0.9, 1: 0.9}, parent_ids=[0])
+    assert new_idx == 1
+    assert state.get_pareto_front() == {0: {1}, 1: {1}}
+    assert state.get_frontier_members() == {1}
+    assert state.get_best_program() == 1
 
 
-def test_budget_hooks_excluded_from_serialization(run_dir):
-    """Budget hooks are runtime-only and should not be serialized."""
-    seed = {"model": "m"}
-    valset_out = ValsetEvaluation(
-        outputs_by_val_id={0: {"x": 1}, 1: {"y": 2}},
-        scores_by_val_id={0: 0.3, 1: 0.7},
-        objective_scores_by_val_id=None,
+def test_add_candidate_unique_instance_win_keeps_old_on_front():
+    state = ASAState({"m": "a"}, {0: 0.5, 1: 0.5})
+    state.add_candidate({"m": "b"}, {0: 0.1, 1: 0.9}, parent_ids=[0])
+    # candidate 0 still wins val 0; candidate 1 uniquely wins val 1
+    assert state.get_pareto_front() == {0: {0}, 1: {1}}
+    assert state.get_frontier_members() == {0, 1}
+    assert state.get_unique_wins(0) == {0}
+    assert state.get_unique_wins(1) == {1}
+
+
+def test_add_candidate_tie_extends_front():
+    state = ASAState({"m": "a"}, {0: 0.5, 1: 0.5})
+    state.add_candidate({"m": "b"}, {0: 0.5, 1: 0.5}, parent_ids=[0])
+    assert state.get_pareto_front() == {0: {0, 1}, 1: {0, 1}}
+    assert state.get_unique_wins(0) == set()
+    assert state.get_unique_wins(1) == set()
+
+
+def test_objective_front_updates_on_add():
+    state = ASAState(
+        {"m": "a"},
+        {0: 0.5, 1: 0.9},
+        seed_objective_scores_by_val_id={0: {"acc": 0.5, "lat": 0.3}, 1: {"acc": 0.9, "lat": 0.1}},
+        frontier_type=FrontierType.HYBRID,
     )
+    # candidate 1 beats acc (0.95 > 0.7) but loses lat (0.05 < 0.2)
+    state.add_candidate(
+        {"m": "b"},
+        {0: 0.9, 1: 1.0},
+        parent_ids=[0],
+        objective_scores_by_val_id={0: {"acc": 0.9, "lat": 0.1}, 1: {"acc": 1.0, "lat": 0.0}},
+    )
+    assert state.get_objective_front() == {"acc": {1}, "lat": {0}}
+    assert state.get_unique_objective_wins(0) == {"lat"}
+    assert state.get_unique_objective_wins(1) == {"acc"}
 
-    state = state_mod.GEPAState(seed, valset_out)
-    state.num_full_ds_evals = 3
-    state.total_num_evals = 10
 
-    # Register a budget hook
-    hook_calls = []
-    state.add_budget_hook(lambda total, delta: hook_calls.append((total, delta)))
+def test_record_iteration_appends_trace():
+    state = ASAState({"m": "a"}, {0: 0.5})
+    state.record_iteration({"note": "first", "accepted": True})
+    assert state.i == 0
+    assert state.full_program_trace == [{"i": 0, "note": "first", "accepted": True}]
 
-    # Verify hook works
+
+def test_increment_evals():
+    state = ASAState({"m": "a"}, {0: 0.5})
+    assert state.total_num_evals == 1
     state.increment_evals(5)
-    assert hook_calls == [(15, 5)]
-    assert state.total_num_evals == 15
-
-    # Save state (should not include _budget_hooks)
-    state.save(run_dir)
-
-    # Load state
-    loaded_state = state_mod.GEPAState.load(run_dir)
-
-    # Loaded state should not have _budget_hooks attribute
-    assert not hasattr(loaded_state, "_budget_hooks")
-
-    # But increment_evals should still work (no hooks to call)
-    loaded_state.increment_evals(3)
-    assert loaded_state.total_num_evals == 18
-
-    # And we can add hooks to the loaded state
-    loaded_hook_calls = []
-    loaded_state.add_budget_hook(lambda total, delta: loaded_hook_calls.append((total, delta)))
-    loaded_state.increment_evals(2)
-    assert loaded_hook_calls == [(20, 2)]
+    assert state.total_num_evals == 6
 
 
-def test_dynamic_validation(run_dir, rng):
-    trainset = [{"id": i, "difficulty": i + 2} for i in range(3)]
-    valset_initial = [{"id": i, "difficulty": i + 2} for i in range(2)]
-    seed_candidate = {"system_prompt": "weight=0"}
+def test_discovery_eval_count_matches_total_at_add():
+    state = ASAState({"m": "a"}, {0: 0.5})
+    state.increment_evals(4)
+    state.add_candidate({"m": "b"}, {0: 0.9}, parent_ids=[0])
+    # discovery count is snapshotted from total_num_evals at add time
+    assert state.num_metric_calls_by_discovery == [0, 5]
 
-    class DummyAdapter:
-        def __init__(self):
-            self.propose_new_texts = self._propose_new_texts
-            self.outcome_reflection = None
 
-        def evaluate(self, batch, candidate, capture_traces=False):
-            weight = int(candidate["system_prompt"].split("=")[-1])
-            outputs = [{"id": item["id"], "weight": weight} for item in batch]
-            scores = [min(1.0, (weight + 1) / (item["difficulty"])) for item in batch]
-            trajectories = [{"score": score} for score in scores] if capture_traces else None
-            return EvaluationBatch(outputs=outputs, scores=scores, trajectories=trajectories)
+def test_best_outputs_valset_tracked():
+    state = ASAState(
+        {"m": "a"},
+        {0: 0.5, 1: 0.5},
+        seed_outputs_by_val_id={0: "out_a0", 1: "out_a1"},
+        track_best_outputs=True,
+    )
+    state.add_candidate(
+        {"m": "b"},
+        {0: 0.9, 1: 0.3},
+        parent_ids=[0],
+        outputs_by_val_id={0: "out_b0", 1: "out_b1"},
+    )
+    assert state.best_outputs_valset is not None
+    assert state.best_outputs_valset[0] == [(1, "out_b0")]
+    assert state.best_outputs_valset[1] == [(0, "out_a1")]
 
-        def make_reflective_dataset(self, candidate, eval_batch, components_to_update):
-            records = [{"score": score} for score in eval_batch.scores]
-            return dict.fromkeys(components_to_update, records)
 
-        def _propose_new_texts(self, candidate, reflective_dataset, components_to_update):
-            weight = int(candidate["system_prompt"].split("=")[-1])
-            return dict.fromkeys(components_to_update, f"weight={weight + 1}")
+def test_json_roundtrip_instance_frontier(tmp_path):
+    state = ASAState({"m": "a"}, {0: 0.5, 1: 0.7})
+    state.add_candidate({"m": "b"}, {0: 0.8, 1: 0.4}, parent_ids=[0])
+    state.record_iteration({"accepted": True})
+    state.increment_evals(3)
 
-    adapter = DummyAdapter()
+    path = tmp_path / "state.json"
+    state.save(str(path))
+    loaded = ASAState.load(str(path))
 
-    # initially only validate on first example
-    class InitValidationPolicy(EvaluationPolicy):
-        def get_eval_batch(self, loader, state, target_program_idx=None):
-            return [0]
+    assert loaded.program_candidates == state.program_candidates
+    assert loaded.parent_program_for_candidates == state.parent_program_for_candidates
+    assert loaded.prog_candidate_val_subscores == state.prog_candidate_val_subscores
+    assert loaded.get_pareto_front() == state.get_pareto_front()
+    assert loaded.total_num_evals == state.total_num_evals
+    assert loaded.i == state.i
+    assert loaded.full_program_trace == state.full_program_trace
 
-        def is_evaluation_sparse(self) -> bool:
-            return False
 
-        def get_best_program(self, state: state_mod.GEPAState) -> state_mod.ProgramIdx:
-            return 0
-
-        def get_valset_score(self, program_idx: state_mod.ProgramIdx, state: state_mod.GEPAState) -> float:
-            return state.get_program_average_val_subset(program_idx)[0]
-
-    init_validation_policy = InitValidationPolicy()
-    gepa.optimize(
-        seed_candidate=seed_candidate,
-        trainset=trainset,
-        valset=valset_initial,
-        adapter=adapter,
-        reflection_lm=None,
-        max_metric_calls=6,
-        run_dir=run_dir,
-        val_evaluation_policy=init_validation_policy,
+def test_json_roundtrip_cartesian_frontier(tmp_path):
+    state = ASAState(
+        {"m": "a"},
+        {0: 0.5, 1: 0.7},
+        seed_objective_scores_by_val_id={0: {"acc": 0.5, "lat": 0.3}, 1: {"acc": 0.7, "lat": 0.2}},
+        frontier_type=FrontierType.CARTESIAN,
+    )
+    state.add_candidate(
+        {"m": "b"},
+        {0: 0.9, 1: 0.6},
+        parent_ids=[0],
+        objective_scores_by_val_id={0: {"acc": 0.9, "lat": 0.4}, 1: {"acc": 0.6, "lat": 0.1}},
     )
 
-    state_phase_one = state_mod.GEPAState.load(str(run_dir))
-    assert len(state_phase_one.program_candidates) >= 2
-    assert 0 in state_phase_one.prog_candidate_val_subscores[-1]
-    assert 1 not in state_phase_one.prog_candidate_val_subscores[-1]
-    assert state_phase_one.valset_evaluations.keys() == {0, 1}
+    path = tmp_path / "state.json"
+    state.save(str(path))
+    loaded = ASAState.load(str(path))
 
-    extended_valset = valset_initial + [{"id": 2, "difficulty": 4}]
-
-    valset_ids = set(range(len(extended_valset)))
-
-    class BackfillValidationPolicy(EvaluationPolicy):
-        def get_eval_batch(self, loader, state, target_program_idx=None) -> list[int]:
-            missing_valset_ids = valset_ids.difference(state.valset_evaluations.keys())
-            if missing_valset_ids:
-                return sorted(list(missing_valset_ids))
-            return rng.sample(valset_ids, 1)
-
-        def get_best_program(self, state: state_mod.GEPAState) -> state_mod.ProgramIdx:
-            return 0
-
-        def is_evaluation_sparse(self) -> bool:
-            return False
-
-        def get_valset_score(self, program_idx: state_mod.ProgramIdx, state: state_mod.GEPAState) -> float:
-            return state.get_program_average_val_subset(program_idx)[0]
-
-    best_stage1_candidate_idx = init_validation_policy.get_best_program(state_phase_one)
-    best_stage1_candidate = state_phase_one.program_candidates[best_stage1_candidate_idx]
-    gepa.optimize(
-        seed_candidate=best_stage1_candidate,
-        trainset=trainset,
-        valset=extended_valset,
-        adapter=adapter,
-        reflection_lm=None,
-        max_metric_calls=10,
-        run_dir=run_dir,
-        val_evaluation_policy=BackfillValidationPolicy(),
-    )
-
-    resumed_state = state_mod.GEPAState.load(str(run_dir))
-    assert resumed_state.valset_evaluations.keys() == valset_ids
-    assert set(resumed_state.prog_candidate_val_subscores[0].keys()) == {0, 1}
-    covered_ids = set().union(*[scores.keys() for scores in resumed_state.prog_candidate_val_subscores])
-    assert covered_ids == {0, 1, 2}
+    assert loaded.get_cartesian_front() == state.get_cartesian_front()
+    assert loaded.pareto_front_cartesian == state.pareto_front_cartesian
+    assert loaded.frontier_type == FrontierType.CARTESIAN
 
 
-@pytest.fixture
-def legacy_run_dir(tmp_path: Path) -> Path:
-    legacy_run_dir = tmp_path / "legacy_run"
-    legacy_run_dir.mkdir(parents=True, exist_ok=True)
-    legacy_resource_path = Path(__file__).parent / "legacy_test_state.bin"
-    shutil.copy2(legacy_resource_path, legacy_run_dir / "gepa_state.bin")
-    return legacy_run_dir
+def test_asa_result_from_state():
+    state = ASAState({"m": "a"}, {0: 0.5, 1: 0.7})
+    state.add_candidate({"m": "b"}, {0: 0.8, 1: 0.6}, parent_ids=[0])
+
+    result = ASAResult.from_state(state)
+    assert result.num_candidates == 2
+    assert result.num_val_instances == 2
+    assert result.best_idx == 1
+    assert result.best_candidate == {"m": "b"}
+    assert result.val_aggregate_scores[0] == pytest.approx(0.6)
+    assert result.val_aggregate_scores[1] == pytest.approx(0.7)
+    # candidate 1 uniquely wins val 0 (0.8 > 0.5); candidate 0 uniquely wins val 1 (0.7 > 0.6)
+    assert result.per_val_instance_best_candidates == {0: {1}, 1: {0}}
 
 
-def test_load_legacy_state(legacy_run_dir):
-    """Ensure legacy gepa_state.bin files migrate correctly when loaded."""
-    state = state_mod.GEPAState.load(str(legacy_run_dir))
-
-    assert isinstance(state.prog_candidate_val_subscores, list)
-    assert all(isinstance(scores, dict) for scores in state.prog_candidate_val_subscores)
-    assert state.validation_schema_version == state_mod.GEPAState._VALIDATION_SCHEMA_VERSION
-    assert state.valset_evaluations.keys() == set(range(45))
+def test_is_dominated_simple():
+    front = {0: {0}, 1: {1}}
+    assert is_dominated(0, {1}, front) is False  # 0 uniquely holds val 0
+    assert is_dominated(1, {0}, front) is False  # 1 uniquely holds val 1
 
 
-@pytest.fixture(scope="module")
-def recorder_dir() -> Path:
-    """Use the cached mocked LLM aime prompt optimization"""
-    RECORDER_DIR = Path(__file__).parent / "test_aime_prompt_optimization"
-    RECORDER_DIR.mkdir(parents=True, exist_ok=True)
-    return RECORDER_DIR
-
-
-def test_e2e_resume_run(mocked_lms, run_dir):
-    """E2E tests for resuming a previous run from a run_dir."""
-    import gepa
-    from gepa.adapters.default_adapter.default_adapter import DefaultAdapter
-
-    # 1. Setup: Unpack fixtures and load data
-    task_lm, reflection_lm = mocked_lms
-    adapter = DefaultAdapter(model=task_lm)
-    trainset, valset, _ = gepa.examples.aime.init_dataset()
-    trainset = trainset[:10]
-    valset = valset[:10]  # [3:8]
-    seed_prompt = {
-        "system_prompt": "You are a helpful assistant. You are given a question and you need to answer it. The answer should be given at the end of your response in exactly the format '### <final answer>'"
-    }
-
-    first_run = gepa.optimize(
-        seed_candidate=seed_prompt,
-        trainset=trainset,
-        valset=valset,
-        adapter=adapter,
-        max_metric_calls=30,
-        reflection_lm=reflection_lm,
-        display_progress_bar=True,
-        run_dir=run_dir,
-    )
-
-    # Resume from the same run_dir. Even if called with `max_metric_calls=0`,
-    # the result should have `total_metric_calls` equal to the amount from the previous run.
-    second_run = gepa.optimize(
-        seed_candidate=seed_prompt,
-        trainset=trainset,
-        valset=valset,
-        adapter=adapter,
-        max_metric_calls=0,
-        reflection_lm=reflection_lm,
-        display_progress_bar=True,
-        run_dir=run_dir,
-    )
-    assert second_run.total_metric_calls == first_run.total_metric_calls
+def test_remove_dominated_programs_prunes():
+    # program 2 only appears on the shared front with {0,1}, so it's dominated
+    # by the pair. Programs 0 and 1 each uniquely win one instance.
+    front = {"a": {0}, "b": {1}, "shared": {0, 1, 2}}
+    pruned = remove_dominated_programs(front)
+    assert pruned == {"a": {0}, "b": {1}, "shared": {0, 1}}

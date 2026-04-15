@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 # Do not add spaces around the '=' sign for any of the fields
 # preceded by a marker comment as it affects the publish workflow.
 #replace_package_name_marker
-name="gepa"
+name="asa"
 #replace_package_version_marker
-version="0.0.27"
-description = "A framework for optimizing textual system components (AI prompts, code snippets, etc.) using LLM-based reflection and Pareto-efficient evolutionary search."
+version="0.1.0"
+description = "Artificial Selection Algorithm — a thin state-tracking library for agent-directed candidate evolution with Pareto frontier memory."
 readme = "README.md"
 authors = [
   { name = "Lakshya A Agrawal", email = "lakshyaaagrawal@berkeley.edu" }
@@ -20,41 +20,12 @@ requires-python = ">=3.10, <3.15"
 dependencies = []
 
 [project.optional-dependencies]
-full = [
-    # Original dependencies for Python < 3.14
-    "litellm>=1.64.0; python_version < '3.14'",
-    "datasets>=2.14.6; python_version < '3.14'",
-    "mlflow>=3.0.0; python_version < '3.14'",
-    "wandb; python_version < '3.14'",
-    # Updated dependencies for Python 3.14+
-    "litellm>=1.81.0; python_version >= '3.14'",
-    "datasets>=4.5.0; python_version >= '3.14'",
-    "mlflow-skinny>=3.8.1; python_version >= '3.14'",
-    "wandb>=0.23.0; python_version >= '3.14'",
-    "pyarrow>=22.0.0; python_version >= '3.14'",
-    "pydantic>=2.12.0; python_version >= '3.14'",
-    "tiktoken>=0.12.0; python_version >= '3.14'",
-    # Common dependencies
-    "tqdm>=4.66.1"
-]
-dspy = []
 test = [
-    "gepa[full]",
     "pytest",
     "pyright"
 ]
-build = [
-    "setuptools>=77.0.1",
-    "wheel",
-    "build",
-    "twine",
-    "semver",
-    "packaging",
-    "requests"
-]
 dev = [
-    "gepa[test]",
-    "gepa[build]",
+    "asa[test]",
     "pre-commit",
     "build>=1.0.3",
     "ruff>=0.3.0"
@@ -68,7 +39,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-gepa = ["py.typed"]
+asa = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -118,8 +89,7 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.ruff.lint.isort]
-known-first-party = ["gepa"]
-known-third-party = ["dspy"]
+known-first-party = ["asa"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
